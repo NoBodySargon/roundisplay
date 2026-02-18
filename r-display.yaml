@@ -1,0 +1,184 @@
+esphome:
+  name: "round-clock"
+  friendly_name: ESP32 Round Display
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: arduino
+
+logger:
+
+api:
+  encryption:
+    key: !secret api_roundisplay_key
+
+ota:
+  - platform: esphome  
+    password: !secret ota_roundisplay
+
+wifi:
+  networks:
+  -  ssid: !secret wifi_s_ssid
+     password: !secret wifi_s_password
+#     fast_connect: true
+  -  ssid: !secret wifi_v_ssid
+     password: !secret wifi_v_password
+#     fast_connect: true
+  ap:
+    ssid: "Esphome-Round-Display"
+    password: !secret ap_password
+
+captive_portal:
+
+
+web_server:
+  port: 80
+
+time:
+  - platform: homeassistant
+    id: my_time
+
+external_components:
+#  - source: github://4cello/esphome@gc9a01
+#  - source: github://pr#3625
+#  - source: github://mcmanigle/esphome-components
+#    components: ["gc9a01"]
+#  - source: github://guillempages/esphome@online_image_buffer
+#    components: [online_image]
+  - source: github://bearpawmaxim/esphome@pr3625fix
+    components: [ gc9a01 ]
+
+spi:
+  mosi_pin: GPIO2
+  clk_pin: GPIO1
+
+
+sensor:
+
+    # ESP Home UpTime
+  - platform: uptime
+    id: uptime_sensor
+    update_interval: 60s
+    on_raw_value:
+      then:
+        - text_sensor.template.publish:
+            id: uptime_human
+            state: !lambda |-
+              int seconds = round(id(uptime_sensor).raw_state);
+              int days = seconds / (24 * 3600);
+              seconds = seconds % (24 * 3600);
+              int hours = seconds / 3600;
+              seconds = seconds % 3600;
+              int minutes = seconds /  60;
+              seconds = seconds % 60;
+              return (
+                (days ? String(days) + ":" : "00:") +
+                (hours ? String(hours) + ":" : "00:") +
+                (minutes ? String(minutes) + ":" : "00:") +
+                (String(seconds) + "")
+              ).c_str();
+
+  - platform: wifi_signal
+    id: wifisignal
+    update_interval: 60s
+  - platform: homeassistant
+    id: battery
+    entity_id: sensor.2203129g_battery_level
+    internal: true
+  - platform: homeassistant
+    name: "Temperature From other ESP"
+    entity_id: sensor.esphome_web_a71f50_komnata
+    id: my_temp
+    internal: true
+
+text_sensor:
+  # ESP WLAN IP Address
+  - platform: wifi_info
+    ip_address:
+      name: "${name} IP Address"
+      id: ip_address
+  # ESP Home UpTime
+  - platform: template
+    id: uptime_human
+    icon: mdi:clock-start
+
+image:
+#  - file: images/shipovnik1.jpg
+#  - file: https://static0.gamerantimages.com/wordpress/wp-content/uploads/2024/01/sonic-x-shadow-generations-announce-trailer-shadow.jpg
+  - file: https://raw.githubusercontent.com/NoBodySargon/roundisplay/main/images/peaxduke.jpg
+    id: my_image
+    resize: 256x256
+    type: RGB565
+
+font:
+  - #file: 'gfonts://Open+Sans'
+    file: https://github.com/ipython/xkcd-font/raw/master/xkcd-script/font/xkcd-script.ttf
+    id: fonthandwritten90
+    size: 48
+    glyphs:
+      [':', ".", '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+
+display:
+## First display <-- Nothing displays, when Second Display is configured. Works fine if comment out Second Display
+  - platform: gc9a01
+    id: roundOLED1
+    reset_pin: GPIO5
+    cs_pin: GPIO4
+    dc_pin: GPIO3
+    rotation: 90
+    update_interval: 60s
+    lambda: |-
+
+      it.image(0, 0, id(my_image));
+        // Define the diameter and the center of the analog clock
+        int diameter = it.get_height();
+        float center_x = diameter / 2;
+        float center_y = diameter / 2;
+
+        // Declare a function to draw a thick line (based on https://github.com/esphome/esphome/blob/6876c65edada3710687260c91302ccfa432d4f08/esphome/components/display/display.cpp#L18)
+        auto thick_line = [](display::Display & it, int x1, int y1, int x2, int y2, int thickness, Color color) {
+          const int32_t dx = abs(x2 - x1), sx = x1 < x2 ? 1 : -1;
+          const int32_t dy = -abs(y2 - y1), sy = y1 < y2 ? 1 : -1;
+          int32_t err = dx + dy;
+
+          while (true) {
+            // instead of just a pixel, draw a whole circle
+            it.filled_circle(x1, y1, thickness, color);
+            if (x1 == x2 && y1 == y2)
+              break;
+            int32_t e2 = 2 * err;
+            if (e2 >= dy) {
+              err += dy;
+              x1 += sx;
+            }
+            if (e2 <= dx) {
+              err += dx;
+              y1 += sy;
+            }
+          }
+        };
+        
+        auto time = id(my_time).now();
+        
+        // Calculate the angles
+        float minute_angle = 2 * PI * (time.minute / 60.0);
+        float hour_angle = 2 * PI * ((time.hour % 12) / 12.0 + time.minute / 720.0);
+    
+        // Declare function to draw a hand
+        auto draw_hand = [=](display::Display & it, float angle, float length, int thickness) {
+                thick_line(it, center_x, center_y, center_x + length * sin(angle) , center_y - length * cos(angle), thickness, Color::WHITE); 
+        };
+
+        //Clear the screen
+        it.fill(Color::BLACK);
+
+        // Draw the numbers of the clock's face
+        for (int i = 1; i <= 12; i++) {
+            float ang = 2 * PI / 12 * i;
+            it.printf(center_x + diameter/2 * 0.85 * sin(ang ) , center_y - diameter/2 * 0.85 * cos(ang), id(fonthandwritten90), Color::WHITE, TextAlign::CENTER, "%i", i);
+            };
+        
+        // Draw the clock's hands 
+        draw_hand(it, minute_angle, diameter / 3, 3);
+        draw_hand(it, hour_angle, diameter / 4, 7);    
